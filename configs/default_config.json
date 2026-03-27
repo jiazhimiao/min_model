@@ -1,0 +1,80 @@
+{
+  "seed": 1234,
+  "output_dir": "./output",
+  "model_prefix": "model",
+  "scorecard": {
+    "y_name": "target",
+    "id_var": "order_id",
+    "date_col": "endDateDuration",
+    "test_size": 0.2,
+    "oot_size": {
+      "low_num": 1000,
+      "high_num": 3000,
+      "threshold": 7000
+    },
+    "feature_selection": {
+      "missing_threshold": 0.95,
+      "ks_threshold": 0.02,
+      "max_features": 30,
+      "min_features": 10,
+      "max_tree_features": 200
+    },
+    "stability_selection": {
+      "enable": true,
+      "psi_threshold": 0.25,
+      "missing_rate_diff_threshold": 0.05,
+      "psi_bins": 10,
+      "min_features_to_keep": 120
+    },
+    "group_feature_limit": {
+      "enable": false,
+      "max_per_group": 80
+    },
+    "feature_engineering": {
+      "enable_interactions": false,
+      "top_base_features": 8,
+      "max_interactions": 6
+    },
+    "logistic": {
+      "iv_threshold": 0.01,
+      "vif_threshold": 8.0,
+      "corr_threshold": 0.8,
+      "max_features": 60,
+      "min_features": 15,
+      "woe_min_bins": 2,
+      "woe_bins": 10,
+      "woe_bin_pct": 0.04,
+      "woe_raw_bin_multiplier": 4,
+      "prefer_monotonic": true,
+      "tree_prefilter": {
+        "enable": true,
+        "max_candidates": 240,
+        "min_keep": 120,
+        "model_type": "random_forest",
+        "n_estimators": 300,
+        "max_depth": 5,
+        "min_samples_leaf": 30
+      },
+      "group_feature_limit": {
+        "enable": false,
+        "max_per_group": 6
+      }
+    },
+    "scorecard_params": {
+      "pdo": 20,
+      "base_score": 500,
+      "base_odds": 20,
+      "score_bin_width": 10
+    },
+    "tuning": {
+      "enable": true,
+      "n_trials": 50,
+      "target": "ks",
+      "validation_size": 0.2,
+      "rolling_splits": 3,
+      "min_train_ratio": 0.4,
+      "top_candidate_count": 5,
+      "candidate_repeats": 3
+    }
+  }
+}

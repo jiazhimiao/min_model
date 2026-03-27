@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+*.pyo
+*.log
+.pytest_cache/
+
+output/
+logs/
+output_files/
+output_files-V*/
+output_files - 副本*/
+
+*.pkl
+*.joblib
+*.png
+*.xlsx
+*.xls
+*.pmml
+*.h5
+*.tk
+*.zip

@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "min-model"
+version = "0.1.0"
+description = "Minimal risk model training package extracted from a larger workspace."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "joblib",
+  "matplotlib",
+  "numpy",
+  "optuna",
+  "pandas",
+  "scikit-learn",
+  "scipy",
+  "statsmodels",
+  "lightgbm",
+  "xgboost",
+  "sklearn2pmml",
+  "sklearn-pandas"
+]
+
+[project.scripts]
+risk-model = "risk_model.cli:run_cli"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

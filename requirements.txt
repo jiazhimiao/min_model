@@ -1,0 +1,12 @@
+pandas
+numpy
+joblib
+matplotlib
+scikit-learn
+scipy
+statsmodels
+lightgbm
+xgboost
+optuna
+sklearn2pmml
+sklearn-pandas
