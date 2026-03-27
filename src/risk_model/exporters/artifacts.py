@@ -10,7 +10,7 @@ import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Alignment, Font, PatternFill
 from PIL import Image as PILImage
@@ -27,6 +27,21 @@ except ImportError:
 def _configure_matplotlib():
     plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'Arial Unicode MS', 'DejaVu Sans']
     plt.rcParams['axes.unicode_minus'] = False
+    plt.rcParams['font.size'] = 12
+    plt.rcParams['axes.titlesize'] = 16
+    plt.rcParams['axes.labelsize'] = 14
+    plt.rcParams['xtick.labelsize'] = 11
+    plt.rcParams['ytick.labelsize'] = 11
+    plt.rcParams['legend.fontsize'] = 12
+
+
+CHART_SIZES = {
+    'roc': (880, 660),
+    'trend': (880, 660),
+    'psi': (880, 660),
+    'bad_rate': (880, 660),
+    'feature_importance': (900, 1500),
+}
 
 
 def _calc_ks_value(y_true, y_pred):
@@ -223,7 +238,7 @@ def _build_strategy_threshold_report(eval_df, y_name, score_edges):
 
 def _safe_image(fig, target_size=None):
     bio = BytesIO()
-    fig.savefig(bio, format='png', dpi=150, bbox_inches='tight')
+    fig.savefig(bio, format='png', dpi=220, bbox_inches='tight', facecolor='white')
     plt.close(fig)
     bio.seek(0)
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
@@ -231,7 +246,7 @@ def _safe_image(fig, target_size=None):
     tmp.close()
     if target_size:
         img = PILImage.open(tmp.name)
-        img = img.resize(target_size)
+        img = img.resize(target_size, PILImage.Resampling.LANCZOS)
         img.save(tmp.name)
     return tmp.name
 
@@ -239,6 +254,40 @@ def _safe_image(fig, target_size=None):
 def _add_sized_image(ws, image_path, cell):
     img = XLImage(image_path)
     ws.add_image(img, cell)
+
+
+def _resolve_oot_template_path(output_dir):
+    repo_root = Path(__file__).resolve().parents[3]
+    cli_dir = repo_root / 'output' / 'cli'
+    preferred = cli_dir / 'model_1648_oot_report.xlsx'
+    if preferred.exists():
+        return preferred
+    candidates = sorted(cli_dir.glob('model_*_oot_report.xlsx'))
+    if candidates:
+        return candidates[0]
+    return None
+
+
+def _prepare_eval_chart_sheet(ws):
+    ws._images = []
+    for row in range(1, max(ws.max_row, 400) + 1):
+        ws.cell(row, 1).value = None
+    ws['A1'] = '模型评估图表'
+
+
+def _estimate_row_span(image_path, default_row_height=20):
+    with PILImage.open(image_path) as img:
+        height_px = img.height
+    row_height_px = default_row_height * 96 / 72
+    return max(int(math.ceil(height_px / row_height_px)), 1)
+
+
+def _append_chart_block(ws, start_row, title, image_path, spacing_rows=10):
+    ws.cell(start_row, 1).value = title
+    image_row = start_row + 1
+    _add_sized_image(ws, image_path, f'A{image_row}')
+    row_span = _estimate_row_span(image_path)
+    return image_row + row_span + spacing_rows
 
 
 def _style_workbook(workbook_path):
@@ -441,7 +490,33 @@ def export_oot_report(trainer, output_dir, prefix, y_true_dict, y_pred_dict):
         feature_stability_df = feature_stability_df.rename(columns={'var': '变量名', 'dev_missing_rate': '开发样本缺失率', 'validation_missing_rate': '验证样本缺失率', 'missing_rate_diff': '缺失率差值', 'feature_psi': '变量PSI', 'stability_pass': '是否通过稳定性筛选', 'stability_rank': '稳定性排序'})
     time_window_summary_df = trainer.train_log.get('time_window_validation_summary', pd.DataFrame()).copy()
     if not time_window_summary_df.empty:
-        time_window_summary_df = time_window_summary_df.rename(columns={'metric_name': '指标名称', 'metric_value': '指标值'})
+        time_window_summary_df = time_window_summary_df.rename(columns={
+            'metric_name': '指标名称',
+            'metric_value': '指标值',
+            'metric': '指标名称',
+            'value': '指标值',
+            'repeat': '重复轮次',
+            'repeat_id': '重复轮次',
+            'window_index': '时间窗编号',
+            'window_id': '时间窗编号',
+            'train_count': '训练样本量',
+            'train_sample': '训练样本量',
+            'train_sample_validation_sample': '训练样本量/时间窗验证样本量',
+            'valid_count': '时间窗验证样本量',
+            'validation_sample': '时间窗验证样本量',
+            'train_auc': '训练集AUC',
+            'auc_train': '训练集AUC',
+            'train_ks': '训练集KS',
+            'ks_train': '训练集KS',
+            'valid_auc': '时间窗验证集AUC',
+            'validation_auc': '时间窗验证集AUC',
+            'valid_ks': '时间窗验证集KS',
+            'validation_ks': '时间窗验证集KS',
+            'valid_score': '时间窗验证目标分',
+            'validation_score': '时间窗验证目标分',
+            'overfit_penalty': '过拟合惩罚',
+            'stability_score': '稳定性得分',
+        })
     tuning_candidates_df = trainer.train_log.get('tuning_candidates', pd.DataFrame()).copy()
     if not tuning_candidates_df.empty:
         tuning_candidates_df = tuning_candidates_df.rename(columns={
@@ -458,13 +533,34 @@ def export_oot_report(trainer, output_dir, prefix, y_true_dict, y_pred_dict):
             'params': '参数组合',
         })
 
-    template_path = Path(__file__).resolve().parents[3] / 'output' / 'cli' / 'model_1628_oot_report.xlsx'
+    template_path = _resolve_oot_template_path(output_dir)
     workbook_path = output_dir / f'{prefix}_oot_report.xlsx'
-    if template_path.exists() and template_path.resolve() != workbook_path.resolve():
+    if template_path and template_path.exists() and template_path.resolve() != workbook_path.resolve():
         shutil.copyfile(template_path, workbook_path)
         wb = load_workbook(workbook_path)
-    else:
+    elif workbook_path.exists():
+        wb = load_workbook(workbook_path)
+    elif template_path and template_path.exists():
         wb = load_workbook(template_path)
+    else:
+        wb = Workbook()
+        default_ws = wb.active
+        default_ws.title = '上线建议说明'
+        for sheet_name in [
+            '上线判定阈值',
+            '模型概览',
+            '分数分布PSI',
+            '验证集分数分段表现',
+            '策略阈值分析',
+            '入模变量及重要性',
+            '变量稳定性筛选',
+            '多时间窗验证',
+            '候选参数稳定性复核',
+            '树模型候选特征筛选过程',
+            '逻辑回归候选特征筛选过程',
+            '评估图表',
+        ]:
+            wb.create_sheet(sheet_name)
 
     def clear_block(ws, start_row, start_col, end_row, end_col):
         for r in range(start_row, end_row + 1):
@@ -543,14 +639,24 @@ def export_oot_report(trainer, output_dir, prefix, y_true_dict, y_pred_dict):
     if not time_window_detail_df.empty:
         detail_df = time_window_detail_df.rename(columns={
             'repeat': '重复轮次',
+            'repeat_id': '重复轮次',
             'window_index': '时间窗编号',
+            'window_id': '时间窗编号',
             'train_count': '训练样本量',
+            'train_sample': '训练样本量',
+            'train_sample_validation_sample': '训练样本量/时间窗验证样本量',
             'valid_count': '时间窗验证样本量',
+            'validation_sample': '时间窗验证样本量',
             'train_auc': '训练集AUC',
+            'auc_train': '训练集AUC',
             'train_ks': '训练集KS',
+            'ks_train': '训练集KS',
             'valid_auc': '时间窗验证集AUC',
+            'validation_auc': '时间窗验证集AUC',
             'valid_ks': '时间窗验证集KS',
+            'validation_ks': '时间窗验证集KS',
             'valid_score': '时间窗验证目标分',
+            'validation_score': '时间窗验证目标分',
             'overfit_penalty': '过拟合惩罚',
             'stability_score': '稳定性得分',
         })
@@ -579,16 +685,9 @@ def export_oot_report(trainer, output_dir, prefix, y_true_dict, y_pred_dict):
     write_table(ws, 14, 1, candidate_process_df)
 
     ws = wb['评估图表']
-    ws._images = []
-    ws['A1'] = '模型评估图表'
-    ws['A2'] = 'ROC 曲线'
-    ws['A30'] = '训练/测试/验证 AUC-KS 对比'
-    ws['A58'] = '分数分布 PSI'
-    ws['A86'] = '验证集分数段坏账率'
-    ws['A114'] = '特征重要性排序'
-
-    ws = wb['评估图表']
-    fig = plt.figure(figsize=(8, 6))
+    _prepare_eval_chart_sheet(ws)
+    next_row = 2
+    fig = plt.figure(figsize=(8.8, 6.8))
     _configure_matplotlib()
     for name, color in [('train', 'blue'), ('test', 'green'), ('oot', 'red')]:
         fpr, tpr, _ = roc_curve(y_true_dict[name], y_pred_dict[name])
@@ -599,69 +698,91 @@ def export_oot_report(trainer, output_dir, prefix, y_true_dict, y_pred_dict):
     plt.plot([0, 1], [0, 1], 'k--', lw=1)
     plt.legend(loc='lower right', fontsize=8)
     plt.title('ROC 曲线')
-    roc_file = _safe_image(fig, target_size=(1285, 1060))
-    _add_sized_image(ws, roc_file, 'A3')
+    roc_file = _safe_image(fig, target_size=CHART_SIZES['roc'])
+    next_row = _append_chart_block(ws, next_row, 'ROC 曲线', roc_file)
 
     if hasattr(trainer.model, 'feature_importances_'):
-        fig = plt.figure(figsize=(8, max(4, len(trainer.var_list or []) * 0.25)))
+        top_n = min(len(trainer.var_list or []), 25)
+        fig = plt.figure(figsize=(9.2, max(10.5, top_n * 0.42)))
         _configure_matplotlib()
-        imp_df = pd.DataFrame({'var': trainer.var_list, 'importance': trainer.model.feature_importances_}).sort_values('importance', ascending=True)
-        plt.barh(imp_df['var'], imp_df['importance'])
-        plt.title('特征重要性')
+        imp_df = pd.DataFrame({'var': trainer.var_list, 'importance': trainer.model.feature_importances_}).sort_values('importance', ascending=False)
+        top_n = min(len(imp_df), 25)
+        imp_plot_df = imp_df.head(top_n).sort_values('importance', ascending=True)
+        colors = ['#8fb8de'] * max(top_n - 8, 0) + ['#2b6cb0'] * min(8, top_n)
+        plt.barh(imp_plot_df['var'], imp_plot_df['importance'], color=colors)
+        plt.xlabel('特征分值')
+        plt.title(f'特征重要性排序 Top {top_n}')
+        plt.grid(True, axis='x', alpha=0.2)
         plt.tight_layout()
-        imp_file = _safe_image(fig, target_size=(1486, 8982))
-        _add_sized_image(ws, imp_file, 'A115')
+        imp_file = _safe_image(fig, target_size=CHART_SIZES['feature_importance'])
 
     _configure_matplotlib()
-    trend_fig = plt.figure(figsize=(8, 6))
-    if date_col in oot_eval.columns:
-        trend_df = oot_eval.copy()
-        trend_df['period'] = pd.to_datetime(trend_df[date_col], errors='coerce').dt.to_period('D').astype(str)
-        rows = []
-        for period, grp in trend_df.groupby('period'):
-            if grp[y_name].nunique() < 2:
-                continue
-            rows.append({
-                'period': period,
-                'auc': roc_auc_score(grp[y_name], grp['pred']),
-                'ks': _calc_ks_value(grp[y_name], grp['pred']),
-            })
-        trend_plot_df = pd.DataFrame(rows)
-    else:
-        trend_plot_df = pd.DataFrame()
-    if trend_plot_df.empty:
-        trend_plot_df = pd.DataFrame({'period': ['验证集'], 'auc': [oot_auc], 'ks': [oot_ks]})
-    plt.plot(trend_plot_df['period'], trend_plot_df['auc'], marker='o', label='AUC')
-    plt.plot(trend_plot_df['period'], trend_plot_df['ks'], marker='o', label='KS')
-    plt.title('验证集AUC/KS趋势')
-    plt.xticks(rotation=45, ha='right')
-    plt.grid(True, alpha=0.3)
-    plt.legend()
-    plt.tight_layout()
-    trend_file = _safe_image(trend_fig, target_size=(1633, 808))
-    _add_sized_image(ws, trend_file, 'A31')
+    trend_fig, trend_ax = plt.subplots(figsize=(8.8, 6.8))
+    trend_labels = ['训练集', '测试集', '验证集']
+    trend_auc = [train_auc, test_auc, oot_auc]
+    trend_ks = [train_ks, test_ks, oot_ks]
+    x = np.arange(len(trend_labels))
+    trend_ax.plot(x, trend_auc, marker='o', linewidth=2.8, markersize=8, label='AUC', color='#1f77b4')
+    trend_ax.plot(x, trend_ks, marker='s', linewidth=2.8, markersize=7, label='KS', color='#ff7f0e')
+    trend_ax.set_title('训练/测试/验证集 AUC-KS 对比')
+    trend_ax.set_ylabel('指标值')
+    trend_ax.set_xticks(x)
+    trend_ax.set_xticklabels(trend_labels)
+    trend_ax.set_ylim(0, 1)
+    trend_ax.grid(True, axis='y', alpha=0.25)
+    trend_ax.axhline(0.65, color='#1f77b4', linestyle='--', linewidth=1, alpha=0.35)
+    trend_ax.axhline(0.25, color='#ff7f0e', linestyle='--', linewidth=1, alpha=0.35)
+    for idx, value in enumerate(trend_auc):
+        trend_ax.text(idx, value + 0.03, f'{value:.3f}', color='#1f77b4', ha='center', va='bottom')
+    for idx, value in enumerate(trend_ks):
+        trend_ax.text(idx, value - 0.05, f'{value:.3f}', color='#ff7f0e', ha='center', va='top')
+    trend_ax.legend(loc='upper right')
+    trend_fig.tight_layout()
+    trend_file = _safe_image(trend_fig, target_size=CHART_SIZES['trend'])
+    next_row = _append_chart_block(ws, next_row, '训练/测试/验证 AUC-KS 对比', trend_file)
 
     _configure_matplotlib()
-    psi_fig = plt.figure(figsize=(8, 6))
+    psi_fig = plt.figure(figsize=(8.8, 6.8))
     psi_plot = psi_export_df.copy()
-    plt.bar(psi_plot['score'].astype(str), psi_plot['PSI'], color='#6ea8fe')
-    plt.title('分数分布PSI')
-    plt.xticks(rotation=45, ha='right')
-    plt.grid(True, axis='y', alpha=0.3)
+    x = np.arange(len(psi_plot))
+    width = 0.36
+    plt.bar(x - width / 2, psi_plot['开发样本占比'], width=width, color='#1f77b4', label='基准样本占比')
+    plt.bar(x + width / 2, psi_plot['验证样本占比'], width=width, color='#ff7f0e', label='验证集样本占比')
+    plt.title('分数分布 PSI')
+    plt.ylabel('样本占比')
+    plt.xticks(x, psi_plot['score'].astype(str), rotation=35, ha='right')
+    plt.grid(True, axis='y', alpha=0.25)
+    plt.legend(loc='upper right')
     plt.tight_layout()
-    psi_file = _safe_image(psi_fig, target_size=(1633, 809))
-    _add_sized_image(ws, psi_file, 'A59')
+    psi_file = _safe_image(psi_fig, target_size=CHART_SIZES['psi'])
+    next_row = _append_chart_block(ws, next_row, '分数分布 PSI', psi_file)
 
     _configure_matplotlib()
-    bad_fig = plt.figure(figsize=(8, 6))
+    bad_fig, ax1 = plt.subplots(figsize=(8.8, 6.8))
     bad_plot = band_export_df.copy()
-    plt.plot(bad_plot['分数段'].astype(str), bad_plot['坏账率'], marker='o', color='#dc3545')
-    plt.title('各分数段坏账率')
-    plt.xticks(rotation=45, ha='right')
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    bad_file = _safe_image(bad_fig, target_size=(1631, 809))
-    _add_sized_image(ws, bad_file, 'A87')
+    x = np.arange(len(bad_plot))
+    bars = ax1.bar(x, bad_plot['样本占比'], color='#9ec3e6', alpha=0.95, label='样本占比')
+    ax1.set_ylabel('样本占比')
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(bad_plot['分数段'].astype(str), rotation=35, ha='right')
+    ax1.grid(True, axis='y', alpha=0.25)
+    ax2 = ax1.twinx()
+    ax2.plot(x, bad_plot['坏账率'], marker='o', linewidth=2.8, markersize=7, color='#d95f02', label='坏账率')
+    ax2.set_ylabel('坏账率')
+    ax1.set_title('验证集分数段样本占比与坏账率')
+    top_idx = int(np.nanargmax(bad_plot['坏账率'].to_numpy(dtype=float))) if len(bad_plot) else 0
+    if len(bad_plot):
+        ax2.scatter([top_idx], [bad_plot['坏账率'].iloc[top_idx]], color='#b22222', s=60, zorder=5)
+        ax2.text(top_idx, bad_plot['坏账率'].iloc[top_idx] + 0.03, f"峰值 {bad_plot['坏账率'].iloc[top_idx]:.1%}", color='#b22222', ha='center')
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax2.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
+    bad_fig.tight_layout()
+    bad_file = _safe_image(bad_fig, target_size=CHART_SIZES['bad_rate'])
+    next_row = _append_chart_block(ws, next_row, '验证集分数段坏账率', bad_file)
+
+    if hasattr(trainer.model, 'feature_importances_'):
+        next_row = _append_chart_block(ws, next_row, '特征重要性排序', imp_file)
 
     wb.save(workbook_path)
     _style_workbook(workbook_path)
