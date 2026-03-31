@@ -290,6 +290,12 @@ def _append_chart_block(ws, start_row, title, image_path, spacing_rows=10):
     return image_row + row_span + spacing_rows
 
 
+def _ensure_sheet(wb, sheet_name):
+    if sheet_name not in wb.sheetnames:
+        wb.create_sheet(sheet_name)
+    return wb[sheet_name]
+
+
 def _style_workbook(workbook_path):
     wb = load_workbook(workbook_path)
     body_font = Font(name='微软雅黑', size=10)
@@ -579,6 +585,22 @@ def export_oot_report(trainer, output_dir, prefix, y_true_dict, y_pred_dict):
     if '分数段' in band_export_df.columns:
         band_export_df['分数段'] = band_export_df['分数段'].astype(str)
     strategy_export_df = strategy_threshold_df.rename(columns={'score_threshold': '分数阈值', 'approve_rate': '通过率', 'reject_rate': '拒绝率', 'approved_bad_rate': '通过样本坏账率', 'rejected_bad_rate': '拒绝样本坏账率', 'bad_capture_rate': '坏客户拦截率', 'good_pass_rate': '好客户通过率', 'approved_count': '通过样本量', 'rejected_count': '拒绝样本量'})
+
+    for sheet_name in [
+        '上线建议说明',
+        '上线判定阈值',
+        '模型概览',
+        '分数分布PSI',
+        '验证集分数分段表现',
+        '策略阈值分析',
+        '入模变量及重要性',
+        '变量稳定性筛选',
+        '多时间窗验证',
+        '候选参数稳定性复核',
+        candidate_sheet_name,
+        '评估图表',
+    ]:
+        _ensure_sheet(wb, sheet_name)
 
     ws = wb['上线建议说明']
     clear_block(ws, 2, 1, max(ws.max_row, 40), 2)

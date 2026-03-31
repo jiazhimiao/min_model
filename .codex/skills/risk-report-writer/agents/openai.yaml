@@ -1,0 +1,4 @@
+interface:
+  display_name: "Risk Report Writer"
+  short_description: "Turn risk findings into clear reports and review memos."
+  default_prompt: "Use $risk-report-writer to convert risk analysis into a concise review memo or management report."

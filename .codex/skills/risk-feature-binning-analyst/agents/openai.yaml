@@ -1,0 +1,4 @@
+interface:
+  display_name: "Risk Feature Binning Analyst"
+  short_description: "Analyze feature bins, rules, and MA score ordering."
+  default_prompt: "Use $risk-feature-binning-analyst to review feature binning, monotonicity, and candidate risk rules."

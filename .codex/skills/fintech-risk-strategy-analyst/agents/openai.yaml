@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fintech Risk Analyst"
+  short_description: "Analyze lending risk strategy and portfolio signals."
+  default_prompt: "Use $fintech-risk-strategy-analyst to assess a lending risk strategy issue and propose actionable controls."

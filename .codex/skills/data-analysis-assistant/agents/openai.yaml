@@ -1,0 +1,4 @@
+interface:
+  display_name: "Data Analysis Assistant"
+  short_description: "Analyze metrics and data evidence for risk work."
+  default_prompt: "Use $data-analysis-assistant to break down a risk metric issue and list the data checks needed."

@@ -8,9 +8,9 @@
     "date_col": "endDateDuration",
     "test_size": 0.2,
     "oot_size": {
-      "low_num": 1000,
-      "high_num": 3000,
-      "threshold": 7000
+      "low_num": 800,
+      "high_num": 1500,
+      "threshold": 8000
     },
     "feature_selection": {
       "missing_threshold": 0.95,
