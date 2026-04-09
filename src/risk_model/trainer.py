@@ -60,13 +60,46 @@ except ImportError:
 class ModelTrainer:
     """风控模型统一训练器"""
     
-    def __init__(self, config=None):
+    def __init__(self, config=None, field_config=None):
         self.config = config or self._default_config()
+        self.field_config = field_config or self._load_field_config()
         self.model = None
         self.var_list = None
         self.woe_binner = None
         self.train_log = {}
         
+    def _load_field_config(self, field_config_path='configs/field_config.json'):
+        """加载字段配置文件"""
+        import json
+        from pathlib import Path
+        field_config = {
+            "fields": {
+                "include": [],
+                "exclude": [],
+                "target": "target"
+            },
+            "field_groups": {},
+            "field_rules": {
+                "missing_threshold": 0.95,
+                "min_unique_values": 2,
+                "max_unique_values": None
+            },
+            "data_types": {
+                "numeric": [],
+                "categorical": [],
+                "date": []
+            }
+        }
+        config_path = Path(field_config_path)
+        if config_path.exists():
+            try:
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    field_config = json.load(f)
+                print(f"已加载字段配置文件: {field_config_path}")
+            except Exception as e:
+                print(f"加载字段配置文件失败: {e}")
+        return field_config
+    
     def _default_config(self):
         return {
             'seed': 1234,
@@ -113,6 +146,64 @@ class ModelTrainer:
         seed = seed or self.config['seed']
         np.random.seed(seed)
         random.seed(seed)
+    
+    def preprocess_data(self, data):
+        """根据字段配置文件进行数据预处理"""
+        # 获取字段配置
+        include_fields = self.field_config['fields']['include']
+        exclude_fields = self.field_config['fields']['exclude']
+        target_field = self.field_config['fields']['target']
+        field_rules = self.field_config['field_rules']
+        
+        # 1. 应用包含/排除规则
+        if include_fields:
+            # 如果指定了包含字段，只保留这些字段
+            data = data[[col for col in include_fields if col in data.columns] + [target_field]]
+        else:
+            # 否则排除指定的字段
+            data = data[[col for col in data.columns if col not in exclude_fields]]
+        
+        # 2. 应用字段规则
+        selected_columns = [target_field]
+        field_stats = []
+        
+        for col in data.columns:
+            if col == target_field:
+                continue
+            
+            # 检查缺失值
+            missing_rate = data[col].isnull().mean()
+            if missing_rate > field_rules['missing_threshold']:
+                print(f"排除字段 {col}: 缺失率过高 ({missing_rate:.2f})")
+                continue
+            
+            # 检查唯一值数量
+            unique_count = data[col].nunique()
+            if unique_count < field_rules['min_unique_values']:
+                print(f"排除字段 {col}: 唯一值数量不足 ({unique_count})")
+                continue
+            
+            if field_rules['max_unique_values'] and unique_count > field_rules['max_unique_values']:
+                print(f"排除字段 {col}: 唯一值数量过多 ({unique_count})")
+                continue
+            
+            selected_columns.append(col)
+            field_stats.append({
+                'field': col,
+                'missing_rate': missing_rate,
+                'unique_count': unique_count,
+                'dtype': str(data[col].dtype)
+            })
+        
+        data = data[selected_columns]
+        self.train_log['field_preprocessing'] = {
+            'original_columns': len(data.columns) + (len(field_stats) - len(selected_columns) + 1),
+            'selected_columns': len(selected_columns),
+            'field_stats': field_stats
+        }
+        
+        print(f"\n数据预处理完成: 从 {len(data.columns) + (len(field_stats) - len(selected_columns) + 1)} 列中选择了 {len(selected_columns)} 列")
+        return data
     
     def load_data(self, data_path, **kwargs):
         path = Path(data_path)
