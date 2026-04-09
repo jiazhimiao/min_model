@@ -1,7 +1,9 @@
 ﻿from __future__ import annotations
 
+import locale
 import math
 import shutil
+import subprocess
 import tempfile
 from io import BytesIO
 from pathlib import Path
@@ -17,7 +19,8 @@ from PIL import Image as PILImage
 from sklearn.metrics import roc_auc_score, roc_curve
 
 try:
-    from sklearn2pmml import PMMLPipeline, sklearn2pmml
+    import sklearn2pmml as sklearn2pmml_pkg
+    from sklearn2pmml import PMMLPipeline
     from sklearn_pandas import DataFrameMapper
     PMML_AVAILABLE = True
 except ImportError:
@@ -87,6 +90,22 @@ def plot_feature_importance(var_list, importance_values, save_path):
     return save_path
 
 
+def _safe_sklearn2pmml(pipeline, pmml_path):
+    original_popen = sklearn2pmml_pkg.Popen
+
+    def _encoding_safe_popen(*args, **kwargs):
+        if kwargs.get('universal_newlines') and 'encoding' not in kwargs and 'text' not in kwargs:
+            kwargs['encoding'] = locale.getencoding() or 'gbk'
+            kwargs.setdefault('errors', 'replace')
+        return subprocess.Popen(*args, **kwargs)
+
+    sklearn2pmml_pkg.Popen = _encoding_safe_popen
+    try:
+        sklearn2pmml_pkg.sklearn2pmml(pipeline, str(pmml_path))
+    finally:
+        sklearn2pmml_pkg.Popen = original_popen
+
+
 def export_pmml(trainer, output_dir, prefix, model_type):
     if not PMML_AVAILABLE:
         print('警告: sklearn2pmml 未安装，跳过 PMML 导出')
@@ -95,7 +114,7 @@ def export_pmml(trainer, output_dir, prefix, model_type):
         mapper = DataFrameMapper([(feature, None) for feature in trainer.var_list])
         pipeline = PMMLPipeline([('mapper', mapper), ('classifier', trainer.model)])
         pmml_path = output_dir / f'{prefix}_{model_type}_model.pmml'
-        sklearn2pmml(pipeline, str(pmml_path))
+        _safe_sklearn2pmml(pipeline, pmml_path)
         print(f'PMML 文件已保存: {pmml_path}')
     except Exception as e:
         print(f'PMML 导出失败: {e}')
@@ -256,16 +275,113 @@ def _add_sized_image(ws, image_path, cell):
     ws.add_image(img, cell)
 
 
-def _resolve_oot_template_path(output_dir):
-    repo_root = Path(__file__).resolve().parents[3]
-    cli_dir = repo_root / 'output' / 'cli'
-    preferred = cli_dir / 'model_1648_oot_report.xlsx'
-    if preferred.exists():
-        return preferred
-    candidates = sorted(cli_dir.glob('model_*_oot_report.xlsx'))
-    if candidates:
-        return candidates[0]
-    return None
+def _build_oot_workbook():
+    wb = Workbook()
+    default_ws = wb.active
+    default_ws.title = '上线建议说明'
+    for sheet_name in [
+        '上线判定阈值',
+        '模型概览',
+        '分数分布PSI',
+        '验证集分数分段表现',
+        '策略阈值分析',
+        '入模变量及重要性',
+        '变量稳定性筛选',
+        '多时间窗验证',
+        '候选参数稳定性复核',
+        '树模型候选特征筛选过程',
+        '逻辑回归候选特征筛选过程',
+        '评估图表',
+    ]:
+        if sheet_name not in wb.sheetnames:
+            wb.create_sheet(sheet_name)
+    return wb
+
+
+def _apply_two_column_number_formats(ws):
+    percent_keywords = ('坏账率', '通过率', '拒绝率', '拦截率', '好客户通过率')
+    decimal_keywords = ('AUC', 'KS', 'PSI', '变化', '截距')
+    integer_keywords = ('样本量', '变量数', '随机种子', '基础分', 'PDO', '基准Odds', '分数分段宽度')
+    for row in range(2, ws.max_row + 1):
+        label = ws.cell(row, 1).value
+        value_cell = ws.cell(row, 2)
+        if not isinstance(label, str) or not isinstance(value_cell.value, (int, float, np.integer, np.floating)):
+            continue
+        if any(keyword in label for keyword in percent_keywords):
+            value_cell.number_format = '0.00%'
+        elif any(keyword in label for keyword in decimal_keywords):
+            value_cell.number_format = '0.0000'
+        elif any(keyword in label for keyword in integer_keywords):
+            value_cell.number_format = '0'
+
+
+def _apply_header_number_formats(ws, header_row):
+    header_map = {}
+    for col in range(1, ws.max_column + 1):
+        header = ws.cell(header_row, col).value
+        if isinstance(header, str) and header:
+            header_map[col] = header
+    percent_keywords = ('占比', '坏账率', '通过率', '拒绝率', '拦截率')
+    integer_keywords = ('样本量', '样本数', '排序', '阈值')
+    decimal_keywords = ('AUC', 'KS', 'PSI', '重要性', '得分', '标准差', '平均分', 'WOE', 'coef', 'score')
+    for row in range(header_row + 1, ws.max_row + 1):
+        for col, header in header_map.items():
+            cell = ws.cell(row, col)
+            if not isinstance(cell.value, (int, float, np.integer, np.floating)):
+                continue
+            if any(keyword in header for keyword in percent_keywords):
+                cell.number_format = '0.00%'
+            elif any(keyword in header for keyword in integer_keywords):
+                cell.number_format = '0'
+            elif any(keyword in header for keyword in decimal_keywords):
+                cell.number_format = '0.0000'
+
+
+def _apply_workbook_number_formats(wb):
+    for sheet_name in ['上线建议说明', '模型概览']:
+        if sheet_name in wb.sheetnames:
+            _apply_two_column_number_formats(wb[sheet_name])
+    if '分数分布PSI' in wb.sheetnames:
+        ws = wb['分数分布PSI']
+        for row in range(2, ws.max_row + 1):
+            ws.cell(row, 2).number_format = '0.00%'
+            ws.cell(row, 3).number_format = '0.00%'
+            ws.cell(row, 4).number_format = '0.0000'
+    if '验证集分数分段表现' in wb.sheetnames:
+        ws = wb['验证集分数分段表现']
+        for row in range(2, ws.max_row + 1):
+            ws.cell(row, 2).number_format = '0'
+            ws.cell(row, 3).number_format = '0'
+            ws.cell(row, 4).number_format = '0.00%'
+            ws.cell(row, 5).number_format = '0.00'
+            ws.cell(row, 6).number_format = '0.00%'
+            ws.cell(row, 7).number_format = '0.00%'
+            ws.cell(row, 8).number_format = '0'
+            ws.cell(row, 9).number_format = '0.00%'
+    if '策略阈值分析' in wb.sheetnames:
+        ws = wb['策略阈值分析']
+        for row in range(2, ws.max_row + 1):
+            ws.cell(row, 1).number_format = '0'
+            for col in range(2, 8):
+                ws.cell(row, col).number_format = '0.00%'
+            ws.cell(row, 8).number_format = '0'
+            ws.cell(row, 9).number_format = '0'
+    if '入模变量及重要性' in wb.sheetnames:
+        ws = wb['入模变量及重要性']
+        for row in range(2, ws.max_row + 1):
+            ws.cell(row, 2).number_format = '0.0000'
+            for col in range(3, 6):
+                ws.cell(row, col).number_format = '0'
+    header_rows = {
+        '变量稳定性筛选': 9,
+        '多时间窗验证': 6,
+        '候选参数稳定性复核': 6,
+        '树模型候选特征筛选过程': 13,
+        '逻辑回归候选特征筛选过程': 13,
+    }
+    for sheet_name, header_row in header_rows.items():
+        if sheet_name in wb.sheetnames:
+            _apply_header_number_formats(wb[sheet_name], header_row)
 
 
 def _prepare_eval_chart_sheet(ws):
@@ -346,6 +462,7 @@ def _style_workbook(workbook_path):
             for col_cells in ws.columns:
                 width = min(max(len(str(cell.value)) if cell.value is not None else 0 for cell in col_cells) + 2, 42)
                 ws.column_dimensions[col_cells[0].column_letter].width = width
+    _apply_workbook_number_formats(wb)
     wb.save(workbook_path)
 
 
@@ -523,6 +640,33 @@ def export_oot_report(trainer, output_dir, prefix, y_true_dict, y_pred_dict):
             'overfit_penalty': '过拟合惩罚',
             'stability_score': '稳定性得分',
         })
+        metric_name_map = {
+            'validation_auc_mean': '时间窗验证集AUC均值',
+            'validation_auc_std': '时间窗验证集AUC标准差',
+            'validation_ks_mean': '时间窗验证集KS均值',
+            'validation_ks_std': '时间窗验证集KS标准差',
+            'stability_score_mean': '稳定性得分均值',
+            'stability_score_std': '稳定性得分标准差',
+            'train_auc_mean': '训练集AUC均值',
+            'train_auc_std': '训练集AUC标准差',
+            'train_ks_mean': '训练集KS均值',
+            'train_ks_std': '训练集KS标准差',
+        }
+        if '指标名称' in time_window_summary_df.columns:
+            time_window_summary_df['指标名称'] = time_window_summary_df['指标名称'].replace(metric_name_map)
+    time_window_detail_headers = [
+        '重复轮次',
+        '时间窗编号',
+        '训练样本量',
+        '时间窗验证样本量',
+        '训练集AUC',
+        '训练集KS',
+        '时间窗验证集AUC',
+        '时间窗验证集KS',
+        '时间窗验证目标分',
+        '过拟合惩罚',
+        '稳定性得分',
+    ]
     tuning_candidates_df = trainer.train_log.get('tuning_candidates', pd.DataFrame()).copy()
     if not tuning_candidates_df.empty:
         tuning_candidates_df = tuning_candidates_df.rename(columns={
@@ -539,34 +683,11 @@ def export_oot_report(trainer, output_dir, prefix, y_true_dict, y_pred_dict):
             'params': '参数组合',
         })
 
-    template_path = _resolve_oot_template_path(output_dir)
     workbook_path = output_dir / f'{prefix}_oot_report.xlsx'
-    if template_path and template_path.exists() and template_path.resolve() != workbook_path.resolve():
-        shutil.copyfile(template_path, workbook_path)
+    if workbook_path.exists():
         wb = load_workbook(workbook_path)
-    elif workbook_path.exists():
-        wb = load_workbook(workbook_path)
-    elif template_path and template_path.exists():
-        wb = load_workbook(template_path)
     else:
-        wb = Workbook()
-        default_ws = wb.active
-        default_ws.title = '上线建议说明'
-        for sheet_name in [
-            '上线判定阈值',
-            '模型概览',
-            '分数分布PSI',
-            '验证集分数分段表现',
-            '策略阈值分析',
-            '入模变量及重要性',
-            '变量稳定性筛选',
-            '多时间窗验证',
-            '候选参数稳定性复核',
-            '树模型候选特征筛选过程',
-            '逻辑回归候选特征筛选过程',
-            '评估图表',
-        ]:
-            wb.create_sheet(sheet_name)
+        wb = _build_oot_workbook()
 
     def clear_block(ws, start_row, start_col, end_row, end_col):
         for r in range(start_row, end_row + 1):
@@ -603,34 +724,50 @@ def export_oot_report(trainer, output_dir, prefix, y_true_dict, y_pred_dict):
         _ensure_sheet(wb, sheet_name)
 
     ws = wb['上线建议说明']
+    ws.cell(1, 1).value = '项目'
+    ws.cell(1, 2).value = '取值'
     clear_block(ws, 2, 1, max(ws.max_row, 40), 2)
     write_table(ws, 2, 1, decision_df)
 
     ws = wb['上线判定阈值']
+    for c_idx, col in enumerate(criteria_df.columns, start=1):
+        ws.cell(1, c_idx).value = col
     clear_block(ws, 2, 1, max(ws.max_row, 20), 4)
     write_table(ws, 2, 1, criteria_df)
 
     ws = wb['模型概览']
+    ws.cell(1, 1).value = '项目'
+    ws.cell(1, 2).value = '取值'
     clear_block(ws, 2, 1, max(ws.max_row, 30), 2)
     write_table(ws, 2, 1, model_summary_df)
 
     ws = wb['分数分布PSI']
+    for c_idx, col in enumerate(psi_export_df.columns, start=1):
+        ws.cell(1, c_idx).value = col
     clear_block(ws, 2, 1, max(ws.max_row, 200), 4)
     write_table(ws, 2, 1, psi_export_df)
 
     ws = wb['验证集分数分段表现']
+    for c_idx, col in enumerate(band_export_df.columns, start=1):
+        ws.cell(1, c_idx).value = col
     clear_block(ws, 2, 1, max(ws.max_row, 200), 9)
     write_table(ws, 2, 1, band_export_df)
 
     ws = wb['策略阈值分析']
+    for c_idx, col in enumerate(strategy_export_df.columns, start=1):
+        ws.cell(1, c_idx).value = col
     clear_block(ws, 2, 1, max(ws.max_row, 200), 9)
     write_table(ws, 2, 1, strategy_export_df)
 
     ws = wb['入模变量及重要性']
+    for c_idx, col in enumerate(feature_importance_df.columns, start=1):
+        ws.cell(1, c_idx).value = col
     clear_block(ws, 2, 1, max(ws.max_row, 1000), 5)
     write_table(ws, 2, 1, feature_importance_df)
 
     ws = wb['变量稳定性筛选']
+    ws.cell(1, 1).value = '说明'
+    ws.cell(1, 2).value = '内容'
     clear_block(ws, 2, 1, max(ws.max_row, 3000), 7)
     summary_rows = [
         ['筛选阶段', f"先基于树模型预筛选结果，仅对重要性大于 0 的变量做稳定性评估，共 {len(candidate_process_before_df)} 个变量。"],
@@ -648,6 +785,8 @@ def export_oot_report(trainer, output_dir, prefix, y_true_dict, y_pred_dict):
         write_table(ws, 10, 1, feature_stability_df)
 
     ws = wb['多时间窗验证']
+    ws.cell(1, 1).value = '说明'
+    ws.cell(1, 2).value = '内容'
     clear_block(ws, 2, 1, max(ws.max_row, 3000), 11)
     ws.cell(2, 1).value = '口径说明'
     ws.cell(2, 2).value = '本页展示的是开发期训练样本内部做滚动切窗后的时间窗验证结果，不是最终 OOT 验证集结果。'
@@ -682,11 +821,14 @@ def export_oot_report(trainer, output_dir, prefix, y_true_dict, y_pred_dict):
             'overfit_penalty': '过拟合惩罚',
             'stability_score': '稳定性得分',
         })
-        for c_idx, col in enumerate(detail_df.columns, start=1):
+        detail_df = detail_df.reindex(columns=[col for col in time_window_detail_headers if col in detail_df.columns])
+        for c_idx, col in enumerate(time_window_detail_headers, start=1):
             ws.cell(15, c_idx).value = col
         write_table(ws, 16, 1, detail_df)
 
     ws = wb['候选参数稳定性复核']
+    ws.cell(1, 1).value = '说明'
+    ws.cell(1, 2).value = '内容'
     clear_block(ws, 2, 1, max(ws.max_row, 3000), 11)
     ws.cell(2, 1).value = '口径说明'
     ws.cell(2, 2).value = '本页的候选参数复核结果来自开发期训练样本内部的滚动时间窗重复验证，用于挑选更稳定的参数组合。'
@@ -698,6 +840,8 @@ def export_oot_report(trainer, output_dir, prefix, y_true_dict, y_pred_dict):
         write_table(ws, 7, 1, tuning_candidates_df)
 
     ws = wb[candidate_sheet_name]
+    ws.cell(1, 1).value = '步骤'
+    ws.cell(1, 2).value = '说明'
     clear_block(ws, 2, 1, max(ws.max_row, 4000), 6)
     for i, row in enumerate(candidate_summary_df.itertuples(index=False), start=2):
         ws.cell(i, 1).value = row[0]
