@@ -1,0 +1,16 @@
+__pycache__/
+runtime/
+feature_analysis_output/
+feature_woe_web_*/
+*.log
+
+# Local data files (do not upload to git by default)
+*.xlsx
+*.xls
+*.csv
+*.parquet
+translation_cache_zh.json
+
+# Keep config json templates, ignore local mapping/history data
+config/*.xlsx
+config/feature_web_history.json
