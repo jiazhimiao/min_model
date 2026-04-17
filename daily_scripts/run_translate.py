@@ -2,8 +2,8 @@ import traceback
 import sys
 
 try:
-    input_file = r'd:\Trae_pro\min_model\daily_scripts\filtered_sms_all_sheets_v2.xlsx'
-    output_file = r'd:\Trae_pro\min_model\daily_scripts\filtered_sms_all_sheets_v2_translated.xlsx'
+    input_file = r'd:\Trae_pro\min_model\daily_scripts\filtered_sms_all_sheets_v3_1.xlsx'
+    output_file = r'd:\Trae_pro\min_model\daily_scripts\filtered_sms_all_sheets_v3_1_translated.xlsx'
     
     sys.argv = [
         'run_translate.py',
