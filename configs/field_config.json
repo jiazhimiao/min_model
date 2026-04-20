@@ -1,0 +1,22 @@
+{
+  "fields": {
+    "include": [],
+    "exclude": ["order_id", "endDateDuration"],
+    "target": "target"
+  },
+  "field_groups": {
+    "basic_info": ["age", "gender", "education"],
+    "financial": ["income", "debt", "credit_score"],
+    "behavior": ["transaction_frequency", "avg_transaction_amount"]
+  },
+  "field_rules": {
+    "missing_threshold": 0.95,
+    "min_unique_values": 2,
+    "max_unique_values": null
+  },
+  "data_types": {
+    "numeric": [],
+    "categorical": [],
+    "date": ["endDateDuration"]
+  }
+}
